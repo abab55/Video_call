@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>视频通话</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #111; color: #eee; font-family: sans-serif; overflow: hidden; }
+        .wrap { display: flex; height: 100vh; }
+        .stage { flex: 1; position: relative; }
+        #remote {
+            width: 100%; height: 100%;
+            object-fit: contain;
+            background: #000;
+        }
+        #localBox {
+            position: absolute;
+            top: calc(100% - 270px);
+            left: calc(100% - 230px);
+            z-index: 15;
+            touch-action: none;
+        }
+        #local {
+            display: block;
+            width: 200px; height: 200px;
+            object-fit: cover;
+            border: 2px solid #333;
+            border-radius: 8px;
+            background: #000;
+            transform: scaleX(-1);
+        }
+        #btnMuteRemote {
+            position: absolute; left: 50%; transform: translateX(-50%);
+            top: 10px; z-index: 25;
+            padding: 8px 22px; font-size: 14px; border: none; border-radius: 18px;
+            background: #2d6cdf; color: #fff; cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,.4);
+        }
+        #btnMuteRemote.hidden { display: none; }
+        #btnMuteRemote.off { background: #c0392b; }
+        #status {
+            position: absolute; left: 0; right: 0; top: 50px;
+            text-align: center; font-size: 16px; color: #aaa;
+            z-index: 10; text-shadow: 0 1px 3px #000;
+        }
+        #micHint {
+            position: absolute; left: 0; right: 0; top: 82px;
+            text-align: center; font-size: 13px; color: #f39c12;
+            z-index: 10; text-shadow: 0 1px 3px #000;
+        }
+        #dbg {
+            position: absolute; left: 8px; bottom: 64px;
+            font-size: 11px; color: #888; z-index: 30;
+            background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 4px;
+            font-family: monospace;
+        }
+        #volWrap {
+            width: 100%; height: 6px; margin-bottom: 4px;
+            background: #222; border-radius: 3px;
+            border: 1px solid #333;
+        }
+        #volWrap.hidden { display: none; }
+        #volBar {
+            width: 0%; height: 100%;
+            background: linear-gradient(90deg, #2ecc71, #f1c40f, #e74c3c);
+            border-radius: 3px;
+        }
+        #remoteVolWrap {
+            position: absolute; left: 50%; transform: translateX(-50%);
+            top: 0; width: min(360px, 50%);
+            height: 8px; background: #222; border-radius: 4px;
+            border: 1px solid #444; z-index: 20; overflow: hidden;
+        }
+        #remoteVolWrap.hidden { display: none; }
+        #remoteVolBar {
+            width: 0%; height: 100%;
+            background: linear-gradient(90deg, #2ecc71, #f1c40f, #e74c3c);
+            border-radius: 4px;
+            transition: width .08s linear;
+        }
+        .sidebar {
+            width: 220px; background: #181818; border-left: 1px solid #2a2a2a;
+            display: flex; flex-direction: column;
+        }
+        .sidebar h3 { padding: 12px 14px; font-size: 14px; border-bottom: 1px solid #2a2a2a; }
+        #peerList { flex: 1; overflow-y: auto; padding: 8px; }
+        .peer {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 8px 10px; margin-bottom: 6px;
+            background: #222; border-radius: 6px; font-size: 14px;
+        }
+        .peer .btn-call {
+            padding: 4px 12px; border: none; border-radius: 12px;
+            background: #2d6cdf; color: #fff; cursor: pointer; font-size: 12px;
+        }
+        .peer .btn-call:disabled { opacity: .4; cursor: default; }
+        .controls {
+            position: absolute; left: 0; right: 0; bottom: 12px;
+            display: flex; justify-content: center; gap: 12px; z-index: 20;
+        }
+        .controls button {
+            padding: 10px 22px; font-size: 15px; border: none; border-radius: 20px;
+            background: #2d6cdf; color: #fff; cursor: pointer;
+        }
+        .controls button:disabled { opacity: .4; cursor: default; }
+        .controls button.off { background: #c0392b; }
+        .controls button.red { background: #c0392b; }
+        .controls button.hidden { display: none; }
+        #callModal {
+            position: fixed; inset: 0; background: rgba(0,0,0,.65);
+            display: none; align-items: center; justify-content: center; z-index: 50;
+        }
+        #callModal.show { display: flex; }
+        .modal-box {
+            background: #1c1c1c; border-radius: 12px; padding: 28px 32px;
+            text-align: center; min-width: 260px;
+        }
+        .modal-box h2 { font-size: 20px; margin-bottom: 8px; }
+        .modal-box p { color: #aaa; font-size: 14px; margin-bottom: 20px; }
+        .modal-box .btn-row { display: flex; gap: 12px; justify-content: center; }
+        .modal-box button {
+            padding: 10px 26px; border: none; border-radius: 20px; font-size: 15px; cursor: pointer;
+        }
+        .modal-box .btn-ok { background: #27ae60; color: #fff; }
+        .modal-box .btn-no { background: #c0392b; color: #fff; }
+
+        @media (max-width: 768px) {
+            .wrap { flex-direction: column; }
+            .stage { height: calc(100dvh - 120px); }
+            .sidebar {
+                order: -1;
+                width: 100%; height: 120px;
+                border-left: none; border-bottom: 1px solid #2a2a2a;
+            }
+            .sidebar h3 { padding: 8px 12px; font-size: 13px; }
+            #peerList {
+                display: flex; overflow-x: auto; gap: 8px; padding: 8px;
+                flex: none;
+            }
+            .peer {
+                flex-shrink: 0; flex-direction: column; gap: 6px;
+                padding: 8px 12px; margin-bottom: 0; min-width: 72px;
+                text-align: center;
+            }
+            .peer .btn-call { padding: 4px 16px; }
+            #localBox { top: calc(100% - 270px); left: calc(100% - 230px); }
+            #local { width: 200px; height: 200px; }
+            #dbg { font-size: 9px; max-width: 60%; }
+            .controls button { padding: 8px 16px; font-size: 13px; }
+            #btnMuteRemote { padding: 6px 16px; font-size: 13px; }
+            #status { font-size: 14px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="stage">
+            <div id="remoteWrap">
+                <video id="remote" autoplay playsinline></video>
+                <button id="btnMuteRemote" class="hidden">静音对方</button>
+                <div id="localBox">
+                    <div id="volWrap" class="hidden"><div id="volBar"></div></div>
+                    <video id="local" autoplay playsinline muted></video>
+                </div>
+                <div id="status">正在请求摄像头权限...</div>
+                <div id="micHint"></div>
+                <div id="dbg"></div>
+            </div>
+            <div id="remoteVolWrap" class="hidden"><div id="remoteVolBar"></div></div>
+            <div class="controls">
+                <button id="btnHangup" class="red hidden">挂断</button>
+                <button id="btnAudio">麦克风: 开</button>
+                <button id="btnVideo">摄像头: 开</button>
+            </div>
+        </div>
+        <div class="sidebar">
+            <h3>在线成员</h3>
+            <div id="peerList"></div>
+        </div>
+    </div>
+
+    <div id="callModal">
+        <div class="modal-box">
+            <h2 id="callerName"></h2>
+            <p>邀请你视频通话</p>
+            <div class="btn-row">
+                <button class="btn-no" id="btnReject">拒绝</button>
+                <button class="btn-ok" id="btnAccept">接听</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        console.clear();
+        alert('此项目由杵仟凝与monkeycode合作完成，QQ交流群:https://qm.qq.com/q/UkKU6UTBq');
+        const name = new URLSearchParams(location.search).get('name') || '';
+        const qp = new URLSearchParams(location.search);
+        const turnHost = qp.get('turn');
+        const turnUser = qp.get('user');
+        const turnPass = qp.get('pass');
+        const iceServers = [
+            { urls: ['stun:stun.l.google.com:19302', 'stun:stun.qq.com:3478'] }
+        ];
+        if (turnHost && turnUser && turnPass) {
+            iceServers.push({ urls: 'turn:' + turnHost, username: turnUser, credential: turnPass });
+        }
+        const RTC_CONFIG = { iceServers: iceServers };
+
+        const statusEl = document.getElementById('status');
+        const micHintEl = document.getElementById('micHint');
+        const localVideo = document.getElementById('local');
+        const remoteVideo = document.getElementById('remote');
+        const peerListEl = document.getElementById('peerList');
+        const callModal = document.getElementById('callModal');
+        const btnAudio = document.getElementById('btnAudio');
+        const btnVideo = document.getElementById('btnVideo');
+        const btnHangup = document.getElementById('btnHangup');
+        const btnMuteRemote = document.getElementById('btnMuteRemote');
+        const remoteVolWrap = document.getElementById('remoteVolWrap');
+        const remoteVolBar = document.getElementById('remoteVolBar');
+
+        let ws = null;
+        let myId = null;
+        let pc = null;
+        let localStream = null;
+        let audioOn = true;
+        let videoOn = true;
+        let state = 'idle';          // idle | calling | ringing | in-call
+        let currentPeer = null;      // 通话/呼叫中的对方 id
+        let currentPeerName = '';
+        let peerNames = {};
+        let sentCandidates = 0, recvCandidates = 0, remoteTracks = 0;
+        let callTimer = null;
+        let serverPeers = [];
+        let audioCtx = null, analyser = null, volData = null;
+        let remoteAnalyser = null, remoteVolData = null, remoteAudioSrc = null;
+        let remoteMuted = false, remoteMeterReady = false;
+        const volWrap = document.getElementById('volWrap');
+        const volBar = document.getElementById('volBar');
+        const localBox = document.getElementById('localBox');
+        const stageEl = document.querySelector('.stage');
+        let dragStart = null;
+
+        function clampDrag(nt, nl) {
+            const maxL = Math.max(0, stageEl.clientWidth - localBox.offsetWidth);
+            const maxT = Math.max(0, stageEl.clientHeight - localBox.offsetHeight);
+            localBox.style.left = Math.max(0, Math.min(nl, maxL)) + 'px';
+            localBox.style.top = Math.max(0, Math.min(nt, maxT)) + 'px';
+        }
+        function dragMove(cx, cy) {
+            if (!dragStart) return;
+            clampDrag(dragStart.top + (cy - dragStart.y), dragStart.left + (cx - dragStart.x));
+        }
+        const endDrag = () => { dragStart = null; };
+
+        localBox.addEventListener('pointerdown', e => {
+            e.preventDefault();
+            dragStart = { x: e.clientX, y: e.clientY, left: localBox.offsetLeft, top: localBox.offsetTop };
+            if (localBox.setPointerCapture) localBox.setPointerCapture(e.pointerId);
+        });
+        localBox.addEventListener('pointermove', e => { dragMove(e.clientX, e.clientY); });
+        localBox.addEventListener('pointerup', endDrag);
+        localBox.addEventListener('pointercancel', endDrag);
+        localBox.addEventListener('touchstart', e => {
+            const t = e.touches[0];
+            dragStart = { x: t.clientX, y: t.clientY, left: localBox.offsetLeft, top: localBox.offsetTop };
+        }, { passive: true });
+        localBox.addEventListener('touchmove', e => {
+            const t = e.touches[0];
+            dragMove(t.clientX, t.clientY);
+        }, { passive: true });
+        localBox.addEventListener('touchend', endDrag);
+
+        function setupRemoteVolumeMeter(stream) {
+            if (remoteMeterReady) return;
+            const track = stream.getAudioTracks()[0];
+            if (!track) { remoteVolWrap.classList.add('hidden'); return; }
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                remoteAudioSrc = audioCtx.createMediaStreamSource(stream);
+                remoteAnalyser = audioCtx.createAnalyser();
+                remoteAnalyser.fftSize = 512;
+                remoteAnalyser.smoothingTimeConstant = 0.3;
+                remoteAudioSrc.connect(remoteAnalyser);
+                remoteVolData = new Uint8Array(remoteAnalyser.frequencyBinCount);
+                remoteMeterReady = true;
+                remoteVolWrap.classList.remove('hidden');
+            } catch (e) {
+                console.error('远端音量表初始化失败:', e);
+                remoteVolWrap.classList.add('hidden');
+            }
+        }
+
+        function setupVolumeMeter(stream) {
+            const track = stream.getAudioTracks()[0];
+            if (!track) { analyser = null; volWrap.classList.add('hidden'); return; }
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const src = audioCtx.createMediaStreamSource(stream);
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 512;
+                analyser.smoothingTimeConstant = 0.3;
+                src.connect(analyser);
+                volData = new Uint8Array(analyser.frequencyBinCount);
+                volWrap.classList.remove('hidden');
+            } catch (e) {
+                console.error('音量表初始化失败:', e);
+                analyser = null;
+                volWrap.classList.add('hidden');
+            }
+        }
+
+        (function volLoop() {
+            requestAnimationFrame(volLoop);
+            if (analyser && volData) {
+                analyser.getByteTimeDomainData(volData);
+                let sum = 0;
+                for (let i = 0; i < volData.length; i++) {
+                    const v = (volData[i] - 128) / 128;
+                    sum += v * v;
+                }
+                const rms = Math.sqrt(sum / volData.length);
+                const pct = Math.min(100, Math.round(Math.pow(rms, 0.55) * 160));
+                volBar.style.width = pct + '%';
+            }
+            if (remoteAnalyser && remoteVolData) {
+                remoteAnalyser.getByteTimeDomainData(remoteVolData);
+                let sum = 0;
+                for (let i = 0; i < remoteVolData.length; i++) {
+                    const v = (remoteVolData[i] - 128) / 128;
+                    sum += v * v;
+                }
+                const rms = Math.sqrt(sum / remoteVolData.length);
+                const pct = Math.min(100, Math.round(Math.pow(rms, 0.55) * 160));
+                remoteVolBar.style.width = pct + '%';
+            }
+        })();
+
+        function setStatus(msg, color) {
+            statusEl.textContent = msg;
+            statusEl.style.color = color || '#aaa';
+        }
+        function setMicHint(t) { micHintEl.textContent = t || ''; }
+
+        if (typeof RTCPeerConnection === 'undefined') {
+            setStatus('当前环境不支持 WebRTC：请通过 https 或 localhost 访问（不能用 http://IP 直连）', '#e74c3c');
+        }
+
+        async function startCamera() {
+            setStatus('正在请求摄像头权限...');
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+                    audio: false
+                });
+                localVideo.srcObject = localStream;
+                try {
+                    const audio = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+                    audio.getTracks().forEach(t => localStream.addTrack(t));
+                    setupVolumeMeter(localStream);
+                } catch (e) {
+                    console.error('麦克风错误:', e.name, e.message);
+                    setMicHint('麦克风不可用 [' + e.name + '] ' + e.message);
+                    btnAudio.disabled = true;
+                    btnAudio.textContent = '麦克风: 不可用';
+                }
+                connect();
+            } catch (err) {
+                setStatus('摄像头无法打开: ' + err.message + '（仍可进入大厅，可接听对方画面）', '#e74c3c');
+                connect();
+            }
+        }
+
+        function connect() {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const q = new URLSearchParams(location.search);
+            q.set('name', name);
+            ws = new WebSocket(`${proto}://${location.host}/ws?${q.toString()}`);
+            ws.onopen = () => setStatus('已连接，等待成员...');
+            ws.onmessage = onMessage;
+            ws.onclose = () => {
+                setStatus('连接断开，刷新页面重试', '#e74c3c');
+            };
+        }
+
+        function send(obj) {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+        }
+
+        async function onMessage(e) {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'hello') {
+                myId = msg.id;
+                setStatus('已连接（' + msg.name + '）');
+            } else if (msg.type === 'peers') {
+                renderPeers(msg.peers);
+            } else if (msg.type === 'invite') {
+                if (state === 'in-call' || state === 'calling' || state === 'ringing') {
+                    send({ type: 'busy', to: msg.from });
+                    return;
+                }
+                state = 'ringing';
+                currentPeer = msg.from;
+                currentPeerName = msg.name || '未知用户';
+                document.getElementById('callerName').textContent = currentPeerName;
+                callModal.classList.add('show');
+                setStatus(currentPeerName + ' 邀请你视频通话');
+            } else if (msg.type === 'reject') {
+                setStatus(currentPeerName + ' 拒绝了通话', '#e74c3c');
+                resetCall();
+            } else if (msg.type === 'busy') {
+                setStatus(currentPeerName + ' 忙，无法接听', '#e74c3c');
+                resetCall();
+            } else if (msg.type === 'hangup') {
+                setStatus('对方已挂断', '#e74c3c');
+                resetCall();
+            } else if (msg.type === 'offer') {
+                if (!currentPeer) { currentPeer = msg.from; currentPeerName = peerNames[msg.from] || '对方'; }
+                state = 'in-call';
+                callModal.classList.remove('show');
+                setStatus('对方已加入，建立连接...');
+                try {
+                    if (!pc) createPC();
+                    await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    send({ type: 'answer', to: currentPeer, sdp: pc.localDescription });
+                } catch (err) {
+                    console.error('offer处理失败:', err);
+                    setStatus('建立连接失败: ' + err.name + ' ' + err.message, '#e74c3c');
+                }
+            } else if (msg.type === 'answer') {
+                try { await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)); }
+                catch (err) { console.error('answer处理失败:', err); }
+            } else if (msg.type === 'candidate') {
+                recvCandidates++;
+                try { await pc.addIceCandidate(msg.candidate); } catch (err) {}
+            }
+        }
+
+        function renderPeers(peers) {
+            serverPeers = peers;
+            const mine = myId;
+            peerListEl.innerHTML = '';
+            for (const p of peers) {
+                const row = document.createElement('div');
+                row.className = 'peer';
+                const span = document.createElement('span');
+                span.textContent = p.name + (p.id === mine ? '（我）' : '');
+                row.appendChild(span);
+                if (p.id !== mine) {
+                    peerNames[p.id] = p.name;
+                    const btn = document.createElement('button');
+                    btn.className = 'btn-call';
+                    btn.textContent = '呼叫';
+                    btn.disabled = (state !== 'idle');
+                    btn.onclick = () => callPeer(p.id, p.name);
+                    row.appendChild(btn);
+                }
+                peerListEl.appendChild(row);
+            }
+        }
+
+        function callPeer(id, pname) {
+            if (state !== 'idle') return;
+            state = 'calling';
+            currentPeer = id;
+            currentPeerName = pname;
+            send({ type: 'invite', to: id });
+            setStatus('正在呼叫 ' + pname + ' ...');
+            btnHangup.classList.remove('hidden');
+            refreshPeerButtons();
+            callTimer = setTimeout(() => {
+                if (state === 'calling') {
+                    setStatus('对方无响应', '#e74c3c');
+                    resetCall();
+                }
+            }, 30000);
+        }
+
+        document.getElementById('btnAccept').addEventListener('click', async () => {
+            callModal.classList.remove('show');
+            state = 'in-call';
+            btnHangup.classList.remove('hidden');
+            try {
+                if (!pc) createPC();
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                send({ type: 'offer', to: currentPeer, sdp: pc.localDescription });
+            } catch (err) {
+                console.error('发起offer失败:', err);
+                setStatus('建立连接失败: ' + err.message, '#e74c3c');
+            }
+        });
+
+        document.getElementById('btnReject').addEventListener('click', () => {
+            send({ type: 'reject', to: currentPeer });
+            callModal.classList.remove('show');
+            setStatus('已拒绝通话');
+            resetCall();
+        });
+
+        btnHangup.addEventListener('click', () => {
+            if (state === 'in-call' || state === 'calling') {
+                send({ type: 'hangup', to: currentPeer });
+            }
+            setStatus('已挂断');
+            resetCall();
+        });
+
+        btnMuteRemote.addEventListener('click', () => {
+            remoteMuted = !remoteMuted;
+            remoteVideo.muted = remoteMuted;
+            btnMuteRemote.textContent = remoteMuted ? '取消静音对方' : '静音对方';
+            btnMuteRemote.classList.toggle('off', remoteMuted);
+        });
+
+        function resetCall() {
+            if (callTimer) { clearTimeout(callTimer); callTimer = null; }
+            if (pc) { pc.close(); pc = null; }
+            remoteVideo.srcObject = null;
+            state = 'idle';
+            currentPeer = null;
+            btnHangup.classList.add('hidden');
+            btnMuteRemote.classList.add('hidden');
+            remoteMuted = false;
+            btnMuteRemote.textContent = '静音对方';
+            btnMuteRemote.classList.remove('off');
+            remoteVideo.muted = false;
+            if (remoteAudioSrc) { try { remoteAudioSrc.disconnect(); } catch (e) {} remoteAudioSrc = null; }
+            remoteAnalyser = null; remoteVolData = null; remoteMeterReady = false;
+            remoteVolWrap.classList.add('hidden');
+            callModal.classList.remove('show');
+            sentCandidates = 0; recvCandidates = 0; remoteTracks = 0;
+            refreshPeerButtons();
+        }
+
+        function refreshPeerButtons() {
+            document.querySelectorAll('.peer .btn-call').forEach(b => {
+                b.disabled = (state !== 'idle');
+            });
+        }
+
+        function createPC() {
+            if (typeof RTCPeerConnection === 'undefined') {
+                throw new Error('当前环境无 WebRTC，需通过 https 或 localhost 访问');
+            }
+            pc = new RTCPeerConnection(RTC_CONFIG);
+            if (localStream && localStream.getTracks().length) {
+                localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+            }
+            pc.ontrack = e => {
+                const stream = e.streams[0] || new MediaStream([e.track]);
+                remoteVideo.srcObject = stream;
+                remoteTracks++;
+                if (e.track && e.track.kind === 'audio') setupRemoteVolumeMeter(stream);
+                btnMuteRemote.classList.remove('hidden');
+                remoteVideo.play().catch(() => {});
+                setStatus('通话中 [本端候选' + sentCandidates + '/收到' + recvCandidates + ']', '#2ecc71');
+            };
+            pc.onicecandidate = e => {
+                if (e.candidate) {
+                    sentCandidates++;
+                    send({ type: 'candidate', to: currentPeer, candidate: e.candidate });
+                }
+            };
+            pc.onconnectionstatechange = () => {
+                if (!pc) return;
+                const st = pc.connectionState;
+                if (st === 'connecting' || st === 'checking') setStatus('正在建立 P2P 连接...');
+                else if (st === 'connected') setStatus('通话中', '#2ecc71');
+                else if (st === 'failed') setStatus('P2P 打洞失败，需要 TURN 服务器', '#e74c3c');
+            };
+        }
+
+        let codecsInfo = '';
+        try {
+            const c = (window.RTCRtpSender && RTCRtpSender.getCapabilities) ? RTCRtpSender.getCapabilities('video') : null;
+            if (c) {
+                codecsInfo = c.codecs.filter(x => !x.mimeType.includes('rtx'))
+                                     .map(x => x.mimeType.split('/')[1]).join(',');
+            }
+        } catch (e) { codecsInfo = 'err'; }
+
+        setInterval(() => {
+            const dbg = document.getElementById('dbg');
+            if (dbg) {
+                dbg.textContent = 'ws=' + (ws ? ws.readyState : '-') +
+                    ' state=' + state +
+                    ' ice=' + (pc ? pc.iceConnectionState : '-') +
+                    ' 发候选=' + sentCandidates + ' 收候选=' + recvCandidates +
+                    ' 远端轨道=' + remoteTracks +
+                    ' | codecs=' + codecsInfo;
+            }
+        }, 500);
+
+        async function toggleMic() {
+            if (!localStream) {
+                try {
+                    localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+                    audioOn = true;
+                    setupVolumeMeter(localStream);
+                    btnAudio.textContent = '麦克风: 开';
+                    btnAudio.classList.remove('off');
+                    btnAudio.disabled = false;
+                    if (pc && state === 'in-call') {
+                        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+                        await renegotiate();
+                    }
+                } catch (e) {
+                    setMicHint('麦克风不可用 [' + e.name + '] ' + e.message);
+                }
+                return;
+            }
+            if (audioOn) {
+                localStream.getAudioTracks().forEach(t => { t.stop(); localStream.removeTrack(t); });
+                audioOn = false;
+                analyser = null;
+                volWrap.classList.add('hidden');
+                btnAudio.textContent = '麦克风: 关';
+                btnAudio.classList.add('off');
+            } else {
+                try {
+                    const a = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+                    a.getTracks().forEach(t => localStream.addTrack(t));
+                    audioOn = true;
+                    setupVolumeMeter(localStream);
+                    btnAudio.textContent = '麦克风: 开';
+                    btnAudio.classList.remove('off');
+                    if (pc) {
+                        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+                        if (sender) await sender.replaceTrack(a.getAudioTracks()[0]).catch(() => {});
+                    }
+                } catch (e) {
+                    setMicHint('麦克风重开失败 [' + e.name + '] ' + e.message);
+                }
+            }
+        }
+        async function toggleCam() {
+            if (!localStream) {
+                try {
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+                        audio: false
+                    });
+                    localVideo.srcObject = localStream;
+                    videoOn = true;
+                    btnVideo.textContent = '摄像头: 开';
+                    btnVideo.classList.remove('off');
+                    localVideo.style.borderColor = '#333';
+                    if (pc && state === 'in-call') {
+                        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+                        await renegotiate();
+                    }
+                } catch (e) {
+                    setMicHint('摄像头不可用 [' + e.name + '] ' + e.message);
+                }
+                return;
+            }
+            if (videoOn) {
+                localStream.getVideoTracks().forEach(t => { t.stop(); localStream.removeTrack(t); });
+                videoOn = false;
+                btnVideo.textContent = '摄像头: 关';
+                btnVideo.classList.add('off');
+                localVideo.style.borderColor = '#c0392b';
+            } else {
+                try {
+                    const v = await navigator.mediaDevices.getUserMedia({
+                        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+                        audio: false
+                    });
+                    v.getTracks().forEach(t => localStream.addTrack(t));
+                    videoOn = true;
+                    localVideo.srcObject = localStream;
+                    btnVideo.textContent = '摄像头: 开';
+                    btnVideo.classList.remove('off');
+                    localVideo.style.borderColor = '#333';
+                    if (pc) {
+                        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+                        if (sender) await sender.replaceTrack(v.getVideoTracks()[0]).catch(() => {});
+                    }
+                } catch (e) {
+                    setMicHint('摄像头重开失败 [' + e.name + '] ' + e.message);
+                }
+            }
+        }
+        async function renegotiate() {
+            if (!pc || state !== 'in-call') return;
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            send({ type: 'offer', to: currentPeer, sdp: pc.localDescription });
+        }
+
+        btnAudio.addEventListener('click', toggleMic);
+        btnVideo.addEventListener('click', toggleCam);
+        startCamera();
+    </script>
+</body>
+</html>
